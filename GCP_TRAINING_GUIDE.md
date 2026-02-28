@@ -21,7 +21,9 @@ We will use a deep learning VM image provided by Google, which comes pre-install
    - Click **Change**.
    - OS: `Deep Learning on Linux`
    - Version: Select the latest `PyTorch` image (e.g., `PyTorch 2.1 with CUDA 12.1 M110`).
-   - Size: At least `100 GB` (Standard persistent disk or SSD) to hold the model weights and data checkpoints.
+   - Size:
+     - **Option A (HuggingFace streaming):** `100 GB` is sufficient — no images are stored locally.
+     - **Option B (local web-subset):** At least `300 GB` — the guiact-web + mind2web archives are ~85 GB downloaded, ~100–200 GB extracted, plus model weights.
 5. **Firewall/Networking**: Standard settings are fine.
 6. Click **Create**.
 7. _Ensure you stop the VM when not in use to avoid hourly GPU charges._
@@ -100,47 +102,60 @@ Training can take hours. It is critical to run it inside a `tmux` session so tha
    python train.py --dataset sft --stream --batch-size 2 --grad-accum 8 --output-dir ./gemma3-gui-libra-lora-sft
    ```
 
-   **Option B — Local web-subset only** (lower disk I/O; uses only the guiact-web + mind2web archives):
+   **Option B — Local web-subset only** (~85 GB download; requires ≥300 GB disk total):
 
-   **Step 1 — Clone the SFT dataset with Git LFS** (do this once, from the VM home directory `~`):
+   > **Why not `git clone`?** The full repo is 163 GB. We use `huggingface-cli download --include` to pull only the two image archives and the 8 annotation files we care about.
+
+   **Step 1 — Download only the web-subset files** (from the VM home directory `~`):
 
    ```bash
-   git lfs install
-   git clone https://huggingface.co/datasets/GUI-Libra/GUI-Libra-81K-SFT
+   huggingface-cli download GUI-Libra/GUI-Libra-81K-SFT \
+     --repo-type dataset \
+     --include "data/images/guiact-web.tar.gz.part-*" \
+     --include "data/images/mind2web.tar.gz.part-*" \
+     --include "data/annotations/guiact-web-*" \
+     --include "data/annotations/mind2web-*" \
+     --local-dir ~/GUI-Libra-web-subset
    ```
 
-   **Step 2 — Merge split parts and extract only the two web archives:**
+   **Step 2 — Stream-extract guiact-web, then delete its parts to free space:**
+   _(Piping directly into tar avoids writing a merged `.tar.gz` to disk, cutting peak usage by ~84 GB.)_
 
    ```bash
-   cd ~/GUI-Libra-81K-SFT/data/images
-   mkdir -p ../images_archives ../images_extracted
+   cd ~/GUI-Libra-web-subset/data
+   mkdir -p images_extracted/guiact-web images_extracted/mind2web
 
-   # Merge split parts into single .tar.gz files
-   cat guiact-web.tar.gz.part-* > ../images_archives/guiact-web.tar.gz
-   cat mind2web.tar.gz.part-*   > ../images_archives/mind2web.tar.gz
+   # guiact-web: stream-extract (two parts, ~84 GB compressed)
+   cat images/guiact-web.tar.gz.part-* | tar -xz -C images_extracted/guiact-web/
+   rm images/guiact-web.tar.gz.part-*    # free ~84 GB before extracting mind2web
 
-   # Extract each archive into its own subdirectory
-   mkdir -p ../images_extracted/guiact-web
-   tar -xzf ../images_archives/guiact-web.tar.gz -C ../images_extracted/guiact-web/
-
-   mkdir -p ../images_extracted/mind2web
-   tar -xzf ../images_archives/mind2web.tar.gz   -C ../images_extracted/mind2web/
+   # mind2web: stream-extract (one part, ~1.2 GB compressed)
+   cat images/mind2web.tar.gz.part-* | tar -xz -C images_extracted/mind2web/
+   rm images/mind2web.tar.gz.part-*
    ```
 
-   After this, images live under `~/GUI-Libra-81K-SFT/data/images_extracted/`.
-
-   **Step 3 — Go back to the scripts directory and verify the JSON schema** (run once):
+   **Step 3 — Verify the JSON schema** (run once before training):
 
    ```bash
-   cd ~/scripts
-   python data_prep_local.py --data-dir ~/GUI-Libra-81K-SFT/data --peek
+   cd ~/gui-libra/scripts
+   python data_prep_local.py --data-dir ~/GUI-Libra-web-subset/data --peek
    ```
 
    **Step 4 — Run Stage 1 training on the web subset:**
 
    ```bash
-   python train.py --local-data-dir ~/GUI-Libra-81K-SFT/data --batch-size 2 --grad-accum 8 --output-dir ./gemma3-gui-libra-lora-sft
+   python train.py --local-data-dir ~/GUI-Libra-web-subset/data --batch-size 2 --grad-accum 8 --output-dir ./gemma3-gui-libra-lora-sft
    ```
+
+   > **Just want a quick pipeline test?** Use `mind2web` alone first (1.2 GB download, ~5 GB extracted, fits on a 100 GB disk):
+   > ```bash
+   > huggingface-cli download GUI-Libra/GUI-Libra-81K-SFT \
+   >   --repo-type dataset \
+   >   --include "data/images/mind2web.tar.gz.part-*" \
+   >   --include "data/annotations/mind2web-*" \
+   >   --local-dir ~/GUI-Libra-web-subset
+   > ```
+   > Then run the same extraction and training commands above — `data_prep_local.py` will automatically pick up only the mind2web files.
 
 3. **Stage 2: Reinforcement Learning (RL) Fine-Tuning**:
    Once Stage 1 completes, run the script again on the RL dataset. The `--resume-from-checkpoint` flag loads the Stage 1 LoRA adapters so training continues from where it left off rather than starting from scratch.

@@ -5,9 +5,9 @@ Only the web-relevant image groups are used:
   - guiact-web  (images extracted from guiact-web.tar.gz.part-*)
   - mind2web    (images extracted from mind2web.tar.gz.part-000)
 
-Expected layout under --data-dir after cloning and extraction:
+Expected layout under --data-dir after download and extraction:
 
-    GUI-Libra-81K-SFT/data/
+    GUI-Libra-web-subset/data/
       annotations/
         guiact-web-reasoning_and_grounding_changecoord.json
         guiact-web-reasoning_and_grounding_changecoord_1000.json
@@ -15,29 +15,31 @@ Expected layout under --data-dir after cloning and extraction:
         mind2web-reasoning_and_grounding_changecoord.json
         mind2web-reasoning_and_grounding_changecoord_1000.json
         mind2web-*noreason*.json
-      images/                        ← raw *.tar.gz.part-* files (git lfs)
-      images_archives/               ← merged .tar.gz files (created by extraction script)
+      images/                        ← raw *.tar.gz.part-* files (downloaded by huggingface-cli)
       images_extracted/
         guiact-web/                  ← extracted images for guiact-web
         mind2web/                    ← extracted images for mind2web
 
-BEFORE running this script, clone the repo and extract the two web archives:
+BEFORE running this script, download only the web-subset files and stream-extract them:
 
-    git lfs install
-    git clone https://huggingface.co/datasets/GUI-Libra/GUI-Libra-81K-SFT
-    cd GUI-Libra-81K-SFT/data/images
-    mkdir -p ../images_archives ../images_extracted
+    # Download only the files we need (~85 GB, vs 163 GB for the full repo)
+    huggingface-cli download GUI-Libra/GUI-Libra-81K-SFT \
+      --repo-type dataset \
+      --include "data/images/guiact-web.tar.gz.part-*" \
+      --include "data/images/mind2web.tar.gz.part-*" \
+      --include "data/annotations/guiact-web-*" \
+      --include "data/annotations/mind2web-*" \
+      --local-dir ~/GUI-Libra-web-subset
 
-    # Step 1: merge split parts into single .tar.gz
-    cat guiact-web.tar.gz.part-* > ../images_archives/guiact-web.tar.gz
-    cat mind2web.tar.gz.part-*   > ../images_archives/mind2web.tar.gz
+    cd ~/GUI-Libra-web-subset/data
+    mkdir -p images_extracted/guiact-web images_extracted/mind2web
 
-    # Step 2: extract each merged archive
-    mkdir -p ../images_extracted/guiact-web
-    tar -xzf ../images_archives/guiact-web.tar.gz -C ../images_extracted/guiact-web/
+    # Stream-extract directly from parts (avoids writing a merged archive to disk)
+    cat images/guiact-web.tar.gz.part-* | tar -xz -C images_extracted/guiact-web/
+    rm images/guiact-web.tar.gz.part-*    # free ~84 GB before extracting mind2web
 
-    mkdir -p ../images_extracted/mind2web
-    tar -xzf ../images_archives/mind2web.tar.gz  -C ../images_extracted/mind2web/
+    cat images/mind2web.tar.gz.part-* | tar -xz -C images_extracted/mind2web/
+    rm images/mind2web.tar.gz.part-*
 
 Standalone usage:
     # Inspect JSON schema before running the full pipeline:
