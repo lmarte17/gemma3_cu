@@ -1,0 +1,27 @@
+name: gui-libra-gemma3-training
+
+compute:
+  # We request an L4 GPU, which is cost-effective and sufficient for 4B models with LoRA/4-bit
+  # If you have higher quotas, you can switch this to '1x A100' or '2x L4'
+  instance: 1x L4
+
+env:
+  # The environment variables
+  # HUGGING_FACE_HUB_TOKEN is usually required to download Gemma-3 since it's gated
+  # You will need to securely provide this via Lightning Secrets in the UI or CLI
+  # e.g., command: lightning run app app.py --env HUGGING_FACE_HUB_TOKEN=$TOKEN
+  # HF_TOKEN: ""
+
+setup:
+  # The bash script that runs before the entrypoint to setup the environment
+  - pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+  - pip install -U transformers datasets bitsandbytes peft trl accelerate decorator numpy
+  # Install the project locally so standard python imports work across the scripts folder
+  # We won't strictly need a setup.py if we just run `python scripts/train.py` directly,
+  # but dependencies must be explicit.
+
+run:
+  # The main command to execute
+  # By default, we launch the training script pulling the SFT dataset in streaming mode
+  # to prevent a massive 150GB+ download hanging your Studio startup.
+  command: "python scripts/train.py --dataset sft --stream --batch-size 2 --grad-accum 8"
