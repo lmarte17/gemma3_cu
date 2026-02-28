@@ -150,7 +150,6 @@ def train(args):
         max_grad_norm=0.3, # crucial for stability with custom loss weights
         max_steps=args.max_steps if args.max_steps else -1,
         warmup_ratio=0.03,
-        group_by_length=True,
         lr_scheduler_type="cosine",
         dataloader_num_workers=8,
         report_to="tensorboard" # Or wandb if configured
