@@ -10,20 +10,24 @@ class ActionAwareDataCollator:
     tokenizer: PreTrainedTokenizerBase
     action_weight: float = 3.0
     action_keyword: str = "Action:"
-    
+
+    def __post_init__(self):
+        # self.tokenizer may be an AutoProcessor (has .tokenizer) or a plain tokenizer
+        self._tok = self.tokenizer.tokenizer if hasattr(self.tokenizer, "tokenizer") else self.tokenizer
+
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         # Handle cases where input is already tensors or lists
         input_ids = [torch.tensor(f["input_ids"]) if isinstance(f["input_ids"], list) else f["input_ids"] for f in features]
         attention_mask = [torch.tensor(f["attention_mask"]) if isinstance(f["attention_mask"], list) else f["attention_mask"] for f in features]
-        
+
         # Pad sequences
-        input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
+        input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self._tok.pad_token_id)
         attention_mask = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True, padding_value=0)
-        
+
         # Standard causal LM labels (shifted inside the model usually, but we provide input_ids as labels)
         # We replace padding token id's in the labels by -100 so they are ignored by the loss function
         labels = input_ids.clone()
-        labels[labels == self.tokenizer.pad_token_id] = -100
+        labels[labels == self._tok.pad_token_id] = -100
         
         # Initialize loss weights (1.0 for standard tokens)
         loss_weights = torch.ones_like(input_ids, dtype=torch.float32)
@@ -41,7 +45,7 @@ class ActionAwareDataCollator:
             # Convert sequence to list for easier processing
             seq_list = seq.tolist()
             # Decode the sequence (warning: can be slow for large batches, but safe)
-            decoded_seq = self.tokenizer.decode(seq_list, skip_special_tokens=False)
+            decoded_seq = self._tok.decode(seq_list, skip_special_tokens=False)
             
             # Find where the action keyword starts
             # Since we formatted as "Reasoning: {reasoning} Action: {action}", 
@@ -53,7 +57,7 @@ class ActionAwareDataCollator:
                 # A heuristic: encode the prefix up to idx to get its length in tokens
                 # We limit the token_start_idx to avoid an out-of-bounds error
                 prefix = decoded_seq[:idx]
-                prefix_tokens = self.tokenizer.encode(prefix, add_special_tokens=False)
+                prefix_tokens = self._tok.encode(prefix, add_special_tokens=False)
                 token_start_idx = min(len(prefix_tokens), len(loss_weights[i]) - 1)
                 
                 # Apply the multiplier to everything from the action keyword onwards
