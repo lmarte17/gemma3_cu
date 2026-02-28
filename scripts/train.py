@@ -135,7 +135,7 @@ def train(args):
     )
 
     # 6. Setup Training Arguments
-    # Note on `max_seq_length`: Must match max_length used in processor to avoid size mismatches.
+    warmup_steps = int(0.03 * args.max_steps) if args.max_steps else 100
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
@@ -149,22 +149,20 @@ def train(args):
         bf16=True, # Recommended for newer GPUs (A100/L4)
         max_grad_norm=0.3, # crucial for stability with custom loss weights
         max_steps=args.max_steps if args.max_steps else -1,
-        warmup_ratio=0.03,
+        warmup_steps=warmup_steps,
         lr_scheduler_type="cosine",
         dataloader_num_workers=8,
         report_to="tensorboard" # Or wandb if configured
     )
 
     # 7. Initialize SFTTrainer
-    # SFTTrainer simplifies causal LM training loops
-    
+    # max_seq_length removed from SFTTrainer in newer TRL — truncation handled in data prep
     trainer = ASFTTrainer(
         model=model,
         train_dataset=dataset,
         # LoRA is always applied manually above (either fresh or resumed), so we never
         # let SFTTrainer rewrap the model. Always pass None here.
         peft_config=None,
-        max_seq_length=2048, # Match config.py
         tokenizer=processor,
         args=training_args,
         data_collator=collator # Inject our ASFT magic
