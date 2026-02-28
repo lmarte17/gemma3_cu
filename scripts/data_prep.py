@@ -1,4 +1,5 @@
 import os
+import io
 import argparse
 from datasets import load_dataset
 from transformers import AutoProcessor
@@ -36,9 +37,14 @@ def format_example_for_gemma3(example):
         }
     ]
     
+    image_bytes = None
+    if image is not None:
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=95)
+        image_bytes = buf.getvalue()
     return {
         "messages": messages,
-        "image": image # Keep the image object around for the processor
+        "image_bytes": image_bytes
     }
 
 def process_dataset(dataset_id=DEFAULT_DATASET, sample_size=None, cache_dir=None, stream=False):
@@ -63,46 +69,30 @@ def process_dataset(dataset_id=DEFAULT_DATASET, sample_size=None, cache_dir=None
     processor = AutoProcessor.from_pretrained(MODEL_ID)
 
     def tokenize_and_prepare(batch):
-        # apply_chat_template takes the list of messages and directly generates the input text string
-        # with all the necessary <start_of_turn> control tokens.
-        
-        # We process the batch one by one for clarity, though processor can handle lists.
-        # Gemma3Processor takes 'images' and 'text'.
-        
         texts = [
-             processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False)
-             for msg in batch["messages"]
+            processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False)
+            for msg in batch["messages"]
         ]
-        
-        # Pass texts and images to processor
-        inputs = processor(
-            text=texts,
-            images=batch["image"],
+        # Text-only — images are processed on-the-fly in the collator
+        inputs = processor.tokenizer(
+            texts,
             return_tensors="pt",
-            padding="max_length", # We'll pad dynamically in the collator usually, but here for demo
+            padding="max_length",
             truncation=True,
-            max_length=2048 # Keep this reasonable to prevent OOM
+            max_length=2048
         )
-        
-        # We return the tokens as lists for HF Datasets compatibility.
-        # pixel_values MUST be included so the vision encoder receives the images during training.
-        result = {
+        return {
             "input_ids": inputs["input_ids"].numpy().tolist(),
             "attention_mask": inputs["attention_mask"].numpy().tolist(),
         }
-        if "pixel_values" in inputs:
-            result["pixel_values"] = inputs["pixel_values"].numpy().tolist()
-        return result
 
-    print("Tokenizing dataset...")
-    # NOTE: In a real robust pipeline, image processing (pixel_values) is often done on the fly
-    # in the DataCollator to save massive disk space. For Phase 1, we will just format.
+    print("Tokenizing dataset (text only — images handled on-the-fly in collator)...")
     tokenized_dataset = formatted_dataset.map(
         tokenize_and_prepare,
         batched=True,
-        batch_size=16,
-        num_proc=8,
-        remove_columns=formatted_dataset.column_names # Remove original columns to save space
+        batch_size=32,
+        num_proc=16,
+        remove_columns=["messages"]  # keep image_bytes for the collator
     )
 
     if cache_dir:

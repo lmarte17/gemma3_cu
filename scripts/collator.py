@@ -1,4 +1,6 @@
+import io
 import torch
+from PIL import Image
 from dataclasses import dataclass
 from typing import Dict, List, Union
 from transformers import PreTrainedTokenizerBase
@@ -68,8 +70,12 @@ class ActionAwareDataCollator:
             "loss_weights": loss_weights
         }
         
-        # Keep pixel values if they are present
-        if "pixel_values" in features[0]:
-             batch["pixel_values"] = torch.stack([torch.tensor(f["pixel_values"]) if isinstance(f["pixel_values"], list) else f["pixel_values"] for f in features])
-             
+        # Process images on-the-fly per batch
+        if "image_path" in features[0]:
+            images = [Image.open(f["image_path"]).convert("RGB") for f in features]
+            batch["pixel_values"] = self.tokenizer.image_processor(images=images, return_tensors="pt").pixel_values
+        elif "image_bytes" in features[0] and features[0]["image_bytes"] is not None:
+            images = [Image.open(io.BytesIO(bytes(f["image_bytes"]))).convert("RGB") for f in features]
+            batch["pixel_values"] = self.tokenizer.image_processor(images=images, return_tensors="pt").pixel_values
+
         return batch

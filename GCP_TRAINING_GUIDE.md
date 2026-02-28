@@ -75,6 +75,7 @@ The recommended way to keep your local MacBook and the GCP VM aligned is by usin
 
 5. **Authenticate with Hugging Face**:
    Gemma-3 is a gated model. You must accept the terms on the Hugging Face website and generate an access token.
+
    ```bash
    huggingface-cli login
    # Paste your token when prompted
@@ -123,7 +124,7 @@ Training can take hours. It is critical to run it inside a `tmux` session so tha
      --repo-type dataset \
      --include "data/images/guiact-web.tar.gz.part-*" \
      --include "data/images/mind2web.tar.gz.part-*" \
-     --include "data/annotations/guiact-web-*" \
+     --include "data/annotations/guiact-web-reasoning_*" \
      --include "data/annotations/mind2web-*" \
      --local-dir ~/GUI-Libra-web-subset
    ```
@@ -158,6 +159,7 @@ Training can take hours. It is critical to run it inside a `tmux` session so tha
    ```
 
    > **Just want a quick pipeline test?** Use `mind2web` alone first (1.2 GB download, ~5 GB extracted, fits on a 100 GB disk):
+   >
    > ```bash
    > huggingface-cli download GUI-Libra/GUI-Libra-81K-SFT \
    >   --repo-type dataset \
@@ -165,6 +167,7 @@ Training can take hours. It is critical to run it inside a `tmux` session so tha
    >   --include "data/annotations/mind2web-*" \
    >   --local-dir ~/GUI-Libra-web-subset
    > ```
+   >
    > Then run the same extraction and training commands above — `data_prep_local.py` will automatically pick up only the mind2web files.
 
 3. **Stage 2: Reinforcement Learning (RL) Fine-Tuning**:

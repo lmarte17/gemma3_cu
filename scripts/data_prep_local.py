@@ -294,8 +294,9 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
                 missing_fields += 1
                 continue
 
-            pil_image = _open_image(image_field, idx)
-            if pil_image is None:
+            basename = Path(image_field).name
+            resolved_path = idx.get(basename) or (image_field if os.path.isfile(image_field) else None)
+            if resolved_path is None:
                 missing_image += 1
                 continue
 
@@ -312,7 +313,7 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
                     "content": [{"type": "text", "text": model_response}]
                 }
             ]
-            records.append({"messages": messages, "image": pil_image})
+            records.append({"messages": messages, "image_path": resolved_path})
 
     if missing_fields:
         print(f"  ⚠️  Skipped {missing_fields} entries — field names not recognised (see schema keys above).")
@@ -337,29 +338,26 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
             processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
             for msgs in batch["messages"]
         ]
-        inputs = processor(
-            text=texts,
-            images=batch["image"],
+        # Text-only — images are processed on-the-fly in the collator
+        inputs = processor.tokenizer(
+            texts,
             return_tensors="pt",
             padding="max_length",
             truncation=True,
             max_length=2048,
         )
-        result = {
+        return {
             "input_ids":      inputs["input_ids"].numpy().tolist(),
             "attention_mask": inputs["attention_mask"].numpy().tolist(),
         }
-        if "pixel_values" in inputs:
-            result["pixel_values"] = inputs["pixel_values"].numpy().tolist()
-        return result
 
     raw_dataset = Dataset.from_list(records)
     tokenized = raw_dataset.map(
         tokenize_batch,
         batched=True,
-        batch_size=16,
-        num_proc=8,
-        remove_columns=raw_dataset.column_names,
+        batch_size=32,
+        num_proc=16,
+        remove_columns=["messages"],  # keep image_path for the collator
     )
     return tokenized
 
