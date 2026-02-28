@@ -80,6 +80,16 @@ The recommended way to keep your local MacBook and the GCP VM aligned is by usin
    # Paste your token when prompted
    ```
 
+6. **Pre-download the Gemma-3-4B-IT base model**:
+   The training and inference scripts load the model via `from_pretrained("google/gemma-3-4b-it")`, which downloads it on first use and caches it in `~/.cache/huggingface/`. Do this explicitly now so that:
+   - Your HF token is validated against the gated model before a long training run starts.
+   - The ~9 GB download completes in the foreground where you can see progress and errors.
+   - Training begins immediately when you launch it, with no hidden download delay.
+
+   ```bash
+   huggingface-cli download google/gemma-3-4b-it
+   ```
+
 ---
 
 ## Part 3: Running the Two-Stage Training (The Cloud GPU)

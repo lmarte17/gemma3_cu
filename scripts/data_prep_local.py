@@ -114,21 +114,41 @@ def _guess_image_subdir(annotation_filename):
     return ""
 
 
-def _open_image(image_field, images_dir, image_subdir):
-    """Try several common path layouts. Returns an open PIL Image or None."""
-    candidates = [
-        image_field,                                                  # absolute / already correct
-        os.path.join(images_dir, image_field),                       # images/<as-written>
-        os.path.join(images_dir, image_subdir, image_field),         # images/<subdir>/<as-written>
-        os.path.join(images_dir, image_subdir, Path(image_field).name),  # images/<subdir>/<basename>
-    ]
-    for path in candidates:
-        if os.path.isfile(path):
-            try:
-                return Image.open(path).convert("RGB")
-            except Exception:
-                return None
-    return None
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
+def _build_image_index(images_dir, image_subdir):
+    """
+    Walk images_extracted/<image_subdir>/ recursively and build a
+    {basename: full_path} index.  This handles any internal directory
+    structure the tar archive may have created (e.g. images_extracted/
+    guiact-web/images/ or images_extracted/mind2web/mind2web/).
+    """
+    subdir_path = os.path.join(images_dir, image_subdir)
+    index = {}
+    if not os.path.isdir(subdir_path):
+        return index
+    for root, _, files in os.walk(subdir_path):
+        for fname in files:
+            if Path(fname).suffix.lower() in _IMAGE_EXTS:
+                # Keep the last writer if there are duplicate basenames
+                index[fname] = os.path.join(root, fname)
+    return index
+
+
+def _open_image(image_field, image_index):
+    """
+    Look up an image by basename in the pre-built index.
+    Falls back to treating image_field as a literal absolute path.
+    Returns an open PIL Image or None.
+    """
+    basename = Path(image_field).name
+    full_path = image_index.get(basename) or (image_field if os.path.isfile(image_field) else None)
+    if full_path is None:
+        return None
+    try:
+        return Image.open(full_path).convert("RGB")
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +184,19 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
     for f in ann_files:
         print(f"  {Path(f).name}")
 
+    # Build a {basename: full_path} index for every image subdir once up-front.
+    # This walks the extracted tree regardless of how deep the tar placed the files,
+    # so it works whether images landed in images_extracted/guiact-web/images/ or
+    # images_extracted/mind2web/mind2web/ or any other depth.
+    image_indexes = {}
+    for subdir in set(IMAGE_SUBDIR_MAP.values()):
+        idx = _build_image_index(images_dir, subdir)
+        image_indexes[subdir] = idx
+        if idx:
+            print(f"  Indexed {len(idx):,} images under images_extracted/{subdir}/")
+        else:
+            print(f"  ⚠️  No images found under images_extracted/{subdir}/ — check extraction.")
+
     records = []   # raw dicts: {"messages": [...], "image": PIL.Image}
     missing = 0
 
@@ -173,7 +206,8 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
 
         subdir  = _guess_image_subdir(ann_file)
         entries = _load_json_file(ann_file)
-        print(f"  Parsing {Path(ann_file).name} → {len(entries)} entries  (images/{subdir}/)")
+        idx     = image_indexes.get(subdir, {})
+        print(f"  Parsing {Path(ann_file).name} → {len(entries)} entries  (index size: {len(idx):,})")
 
         for entry in entries:
             if sample_size and len(records) >= sample_size:
@@ -192,7 +226,7 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
                 missing += 1
                 continue
 
-            pil_image = _open_image(image_field, images_dir, subdir)
+            pil_image = _open_image(image_field, idx)
             if pil_image is None:
                 missing += 1
                 continue
