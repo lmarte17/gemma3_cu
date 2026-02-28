@@ -53,6 +53,7 @@ Standalone usage:
 """
 
 import os
+import re
 import json
 import glob
 import argparse
@@ -151,6 +152,40 @@ def _open_image(image_field, image_index):
         return None
 
 
+def _extract_from_conversations(conversations):
+    """
+    Parse a conversations list (ShareGPT / LLaVA format) into (goal, model_response).
+
+    Supports both:
+      {"from": "human", "value": "..."}  and  {"role": "user", "content": "..."}
+
+    The human turn becomes the goal; the gpt/assistant turn becomes the model
+    response (used as-is, since it already contains the "Reasoning: ... Action: ..."
+    or "Action: ..." format produced by the dataset).
+
+    Returns (None, None) if the expected turns are missing.
+    """
+    if not isinstance(conversations, list):
+        return None, None
+
+    human_text = None
+    gpt_text = None
+    for turn in conversations:
+        role = turn.get("from") or turn.get("role") or ""
+        text = (turn.get("value") or turn.get("content") or "").strip()
+        if role in ("human", "user") and human_text is None:
+            human_text = text
+        elif role in ("gpt", "assistant", "model") and gpt_text is None:
+            gpt_text = text
+
+    if not human_text or not gpt_text:
+        return None, None
+
+    # Strip leading <image> token that some LLaVA-style datasets embed in the human turn
+    human_text = re.sub(r"<image>\s*", "", human_text).strip()
+    return human_text, gpt_text
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -211,28 +246,51 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
         print(f"  Parsing {Path(ann_file).name} → {len(entries)} entries  (index size: {len(idx):,})")
 
         # --- Print the actual keys and resolved values for the first entry ---
-        # This lets us diagnose schema mismatches without a separate --peek run.
         if entries:
             first = entries[0]
             print(f"    Schema keys : {list(first.keys())}")
-            print(f"    image_field : {repr(first.get('image') or first.get('img_filename') or first.get('screenshot') or first.get('img_path') or '(not found)')}")
-            print(f"    goal        : {repr((first.get('goal') or first.get('instruction') or first.get('task_instruction') or first.get('query') or '(not found)'))[:80]}")
-            print(f"    action      : {repr((first.get('action') or first.get('answer') or first.get('response') or '(not found)'))[:80]}")
+            convs = first.get("conversations")
+            if convs and isinstance(convs, list):
+                for i, turn in enumerate(convs[:2]):
+                    role = turn.get("from") or turn.get("role", "?")
+                    text = (turn.get("value") or turn.get("content") or "")[:100]
+                    print(f"    conversations[{i}] ({role}): {repr(text)}")
+            else:
+                print(f"    image_field : {repr(first.get('image') or first.get('img_filename') or first.get('screenshot') or first.get('img_path') or '(not found)')}")
+                print(f"    goal        : {repr((first.get('goal') or first.get('instruction') or first.get('task_instruction') or first.get('query') or '(not found)'))[:80]}")
+                print(f"    action      : {repr((first.get('action') or first.get('answer') or first.get('response') or '(not found)'))[:80]}")
 
         for entry in entries:
             if sample_size and len(records) >= sample_size:
                 break
 
-            # Flexible key resolution — handles multiple common JSON schemas
             image_field = (entry.get("image") or entry.get("img_filename")
                            or entry.get("screenshot") or entry.get("img_path") or "")
-            goal        = (entry.get("goal") or entry.get("instruction")
-                           or entry.get("task_instruction") or entry.get("query") or "")
-            reasoning   = entry.get("reasoning") or entry.get("thought") or ""
-            action      = (entry.get("action") or entry.get("answer")
-                           or entry.get("response") or "")
 
-            if not image_field or not goal or not action:
+            # --- conversations format (ShareGPT / LLaVA style) ---
+            conversations = entry.get("conversations")
+            if conversations:
+                goal, model_response = _extract_from_conversations(conversations)
+                if not goal or not model_response:
+                    missing_fields += 1
+                    continue
+            else:
+                # Flat key format
+                goal      = (entry.get("goal") or entry.get("instruction")
+                             or entry.get("task_instruction") or entry.get("query") or "")
+                reasoning = entry.get("reasoning") or entry.get("thought") or ""
+                action    = (entry.get("action") or entry.get("answer")
+                             or entry.get("response") or "")
+                if not goal or not action:
+                    missing_fields += 1
+                    continue
+                model_response = (
+                    f"Reasoning: {reasoning} Action: {action}"
+                    if reasoning else
+                    f"Action: {action}"
+                )
+
+            if not image_field:
                 missing_fields += 1
                 continue
 
@@ -240,13 +298,6 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
             if pil_image is None:
                 missing_image += 1
                 continue
-
-            # Same output format as data_prep.py
-            model_response = (
-                f"Reasoning: {reasoning} Action: {action}"
-                if reasoning else
-                f"Action: {action}"
-            )
 
             messages = [
                 {
