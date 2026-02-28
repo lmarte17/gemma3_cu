@@ -163,7 +163,7 @@ def train(args):
         # LoRA is always applied manually above (either fresh or resumed), so we never
         # let SFTTrainer rewrap the model. Always pass None here.
         peft_config=None,
-        tokenizer=processor,
+        processing_class=processor,
         args=training_args,
         data_collator=collator # Inject our ASFT magic
     )
