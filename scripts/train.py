@@ -147,6 +147,8 @@ def train(args):
         weight_decay=0.001,
         fp16=False,
         bf16=True, # Recommended for newer GPUs (A100/L4)
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         max_grad_norm=0.3, # crucial for stability with custom loss weights
         max_steps=args.max_steps if args.max_steps else -1,
         warmup_steps=warmup_steps,

@@ -338,17 +338,17 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
             processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
             for msgs in batch["messages"]
         ]
-        # Text-only — images are processed on-the-fly in the collator
+        # Text-only, no padding — collator dynamically pads each batch to its actual
+        # max length, keeping logits small and preventing OOM on long-vocab models.
         inputs = processor.tokenizer(
             texts,
-            return_tensors="pt",
-            padding="max_length",
+            padding=False,
             truncation=True,
             max_length=2048,
         )
         return {
-            "input_ids":      inputs["input_ids"].numpy().tolist(),
-            "attention_mask": inputs["attention_mask"].numpy().tolist(),
+            "input_ids":      inputs["input_ids"],
+            "attention_mask": inputs["attention_mask"],
         }
 
     raw_dataset = Dataset.from_list(records)

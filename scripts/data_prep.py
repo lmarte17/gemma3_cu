@@ -73,17 +73,17 @@ def process_dataset(dataset_id=DEFAULT_DATASET, sample_size=None, cache_dir=None
             processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False)
             for msg in batch["messages"]
         ]
-        # Text-only — images are processed on-the-fly in the collator
+        # Text-only, no padding — collator dynamically pads each batch to its actual
+        # max length, keeping logits small and preventing OOM on long-vocab models.
         inputs = processor.tokenizer(
             texts,
-            return_tensors="pt",
-            padding="max_length",
+            padding=False,
             truncation=True,
             max_length=2048
         )
         return {
-            "input_ids": inputs["input_ids"].numpy().tolist(),
-            "attention_mask": inputs["attention_mask"].numpy().tolist(),
+            "input_ids": inputs["input_ids"],
+            "attention_mask": inputs["attention_mask"],
         }
 
     print("Tokenizing dataset (text only — images handled on-the-fly in collator)...")
