@@ -5,10 +5,10 @@ from transformers import (
     AutoProcessor,
     AutoModelForCausalLM,
     BitsAndBytesConfig,
-    TrainingArguments
+    TrainingArguments,
+    Trainer
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
-from trl import SFTTrainer
 import torch.nn as nn
 
 # Import our custom modules from Phase 1
@@ -16,7 +16,7 @@ from config import MODEL_ID, DATASET_ID_SFT, DATASET_ID_RL, DEFAULT_DATASET
 from data_prep import process_dataset
 from collator import ActionAwareDataCollator
 
-class ASFTTrainer(SFTTrainer):
+class ASFTTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         # Remove loss_weights before passing to the model
         loss_weights = inputs.pop("loss_weights", None)
@@ -155,17 +155,14 @@ def train(args):
         report_to="tensorboard" # Or wandb if configured
     )
 
-    # 7. Initialize SFTTrainer
-    # max_seq_length removed from SFTTrainer in newer TRL — truncation handled in data prep
+    # 7. Initialize Trainer
+    # Using base Trainer rather than SFTTrainer to avoid SFTTrainer's internal
+    # dataset re-processing, which conflicts with our pre-tokenized data + custom collator.
     trainer = ASFTTrainer(
         model=model,
         train_dataset=dataset,
-        # LoRA is always applied manually above (either fresh or resumed), so we never
-        # let SFTTrainer rewrap the model. Always pass None here.
-        peft_config=None,
-        processing_class=processor,
         args=training_args,
-        data_collator=collator # Inject our ASFT magic
+        data_collator=collator
     )
 
     if args.test_mode:
