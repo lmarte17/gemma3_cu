@@ -67,13 +67,24 @@ class ActionAwareDataCollator:
             # Ensure padding tokens have 0 weight (though labels=-100 handles the loss ignoring anyway)
             loss_weights[i][attention_mask[i] == 0] = 0.0
 
+        # Gemma3 requires token_type_ids to distinguish image placeholder tokens from
+        # text tokens (different attention patterns apply to each).
+        # Image positions are wherever input_ids matches the image placeholder token ID.
+        image_token_id = self.tokenizer.image_token_id
+        token_type_ids = torch.where(
+            input_ids == image_token_id,
+            input_ids,
+            torch.zeros_like(input_ids)
+        )
+
         batch = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
+            "token_type_ids": token_type_ids,
             "labels": labels,
             "loss_weights": loss_weights
         }
-        
+
         # Process images on-the-fly per batch
         if "image_path" in features[0]:
             images = [Image.open(f["image_path"]).convert("RGB") for f in features]
