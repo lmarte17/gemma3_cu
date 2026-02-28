@@ -198,7 +198,8 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
             print(f"  ⚠️  No images found under images_extracted/{subdir}/ — check extraction.")
 
     records = []   # raw dicts: {"messages": [...], "image": PIL.Image}
-    missing = 0
+    missing_fields = 0
+    missing_image  = 0
 
     for ann_file in ann_files:
         if sample_size and len(records) >= sample_size:
@@ -208,6 +209,15 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
         entries = _load_json_file(ann_file)
         idx     = image_indexes.get(subdir, {})
         print(f"  Parsing {Path(ann_file).name} → {len(entries)} entries  (index size: {len(idx):,})")
+
+        # --- Print the actual keys and resolved values for the first entry ---
+        # This lets us diagnose schema mismatches without a separate --peek run.
+        if entries:
+            first = entries[0]
+            print(f"    Schema keys : {list(first.keys())}")
+            print(f"    image_field : {repr(first.get('image') or first.get('img_filename') or first.get('screenshot') or first.get('img_path') or '(not found)')}")
+            print(f"    goal        : {repr((first.get('goal') or first.get('instruction') or first.get('task_instruction') or first.get('query') or '(not found)'))[:80]}")
+            print(f"    action      : {repr((first.get('action') or first.get('answer') or first.get('response') or '(not found)'))[:80]}")
 
         for entry in entries:
             if sample_size and len(records) >= sample_size:
@@ -223,12 +233,12 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
                            or entry.get("response") or "")
 
             if not image_field or not goal or not action:
-                missing += 1
+                missing_fields += 1
                 continue
 
             pil_image = _open_image(image_field, idx)
             if pil_image is None:
-                missing += 1
+                missing_image += 1
                 continue
 
             # Same output format as data_prep.py
@@ -253,8 +263,10 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
             ]
             records.append({"messages": messages, "image": pil_image})
 
-    if missing:
-        print(f"  ⚠️  Skipped {missing} entries (missing image file or required fields).")
+    if missing_fields:
+        print(f"  ⚠️  Skipped {missing_fields} entries — field names not recognised (see schema keys above).")
+    if missing_image:
+        print(f"  ⚠️  Skipped {missing_image} entries — image file not found in index.")
 
     print(f"Total examples loaded: {len(records)}")
 
