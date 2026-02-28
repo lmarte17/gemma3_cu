@@ -57,7 +57,7 @@ def process_dataset(dataset_id=DEFAULT_DATASET, sample_size=None, cache_dir=None
 
     print("Formatting messages...")
     # IterableDatasets (streaming) don't support num_proc in .map()
-    formatted_dataset = dataset.map(format_example_for_gemma3, num_proc=None if stream else 4)
+    formatted_dataset = dataset.map(format_example_for_gemma3, num_proc=None if stream else 16)
 
     print(f"Loading processor: {MODEL_ID}")
     processor = AutoProcessor.from_pretrained(MODEL_ID)
@@ -98,9 +98,10 @@ def process_dataset(dataset_id=DEFAULT_DATASET, sample_size=None, cache_dir=None
     # NOTE: In a real robust pipeline, image processing (pixel_values) is often done on the fly
     # in the DataCollator to save massive disk space. For Phase 1, we will just format.
     tokenized_dataset = formatted_dataset.map(
-        tokenize_and_prepare, 
-        batched=True, 
-        batch_size=8,
+        tokenize_and_prepare,
+        batched=True,
+        batch_size=16,
+        num_proc=8,
         remove_columns=formatted_dataset.column_names # Remove original columns to save space
     )
 

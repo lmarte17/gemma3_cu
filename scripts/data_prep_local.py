@@ -357,7 +357,8 @@ def load_local_web_dataset(data_dir, processor, sample_size=None):
     tokenized = raw_dataset.map(
         tokenize_batch,
         batched=True,
-        batch_size=8,
+        batch_size=16,
+        num_proc=8,
         remove_columns=raw_dataset.column_names,
     )
     return tokenized

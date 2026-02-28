@@ -152,6 +152,7 @@ def train(args):
         warmup_ratio=0.03,
         group_by_length=True,
         lr_scheduler_type="cosine",
+        dataloader_num_workers=8,
         report_to="tensorboard" # Or wandb if configured
     )
 
