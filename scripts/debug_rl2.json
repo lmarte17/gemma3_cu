@@ -1,0 +1,113 @@
+{
+  "summary": {
+    "total": 5,
+    "hits": 0,
+    "click_accuracy": 0.0,
+    "parse_failures": 0,
+    "parse_failure_rate": 0.0,
+    "by_platform": {
+      "unknown": {
+        "hits": 0,
+        "total": 5
+      }
+    },
+    "by_element_type": {
+      "unknown": {
+        "hits": 0,
+        "total": 5
+      }
+    }
+  },
+  "results": [
+    {
+      "index": 0,
+      "instruction": "close",
+      "platform": "unknown",
+      "element_type": "unknown",
+      "bbox": [
+        0.9479166666666666,
+        0.14444444444444443,
+        0.99375,
+        0.2074074074074074
+      ],
+      "pred_coords": [
+        -1.0,
+        -1.0
+      ],
+      "raw_output": "Action: Terminate(-1, -1)",
+      "hit": false
+    },
+    {
+      "index": 1,
+      "instruction": "minimize this window",
+      "platform": "unknown",
+      "element_type": "unknown",
+      "bbox": [
+        0.8697916666666666,
+        0.0,
+        0.9072916666666667,
+        0.05555555555555555
+      ],
+      "pred_coords": [
+        1.0,
+        0.0
+      ],
+      "raw_output": "Action: Click(1, 0)",
+      "hit": false
+    },
+    {
+      "index": 2,
+      "instruction": "play the solitaire collection",
+      "platform": "unknown",
+      "element_type": "unknown",
+      "bbox": [
+        0.134375,
+        0.1287037037037037,
+        0.8635416666666667,
+        0.3435185185185185
+      ],
+      "pred_coords": [
+        1.0,
+        0.0
+      ],
+      "raw_output": "Action: Click(1, 0)",
+      "hit": false
+    },
+    {
+      "index": 3,
+      "instruction": "open the gallery",
+      "platform": "unknown",
+      "element_type": "unknown",
+      "bbox": [
+        0.29270833333333335,
+        0.11296296296296296,
+        0.4,
+        0.3055555555555556
+      ],
+      "pred_coords": [
+        1.0,
+        0.0
+      ],
+      "raw_output": "Action: Click(1, 0)",
+      "hit": false
+    },
+    {
+      "index": 4,
+      "instruction": "adjust the style",
+      "platform": "unknown",
+      "element_type": "unknown",
+      "bbox": [
+        0.6614583333333334,
+        0.6666666666666666,
+        0.7052083333333333,
+        0.7833333333333333
+      ],
+      "pred_coords": [
+        1.0,
+        0.0
+      ],
+      "raw_output": "Action: click(1, 0)",
+      "hit": false
+    }
+  ]
+}

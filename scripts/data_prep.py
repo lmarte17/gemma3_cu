@@ -12,26 +12,28 @@ from config import DATASET_ID_RL, DATASET_ID_SFT, DEFAULT_DATASET, MODEL_ID, LOC
 # ---------------------------------------------------------------------------
 
 def _format_action_str(gt_action, gt_point_2d, gt_input_text):
-    """Convert RL dataset answer fields into the 'Action: ...' string the model learns to produce."""
+    """Convert RL dataset answer fields into the 'Action: ...' string the model learns to produce.
+
+    gt_point_2d is normalized [0, 1] — multiply by 1000 to match the [0, 1000]
+    coordinate scale expected by is_hit() in eval.py.
+    """
     action_lower = (gt_action or "").lower().strip()
     has_coords = gt_point_2d and len(gt_point_2d) >= 2
 
+    if has_coords:
+        x, y = round(gt_point_2d[0] * 1000), round(gt_point_2d[1] * 1000)
+
     if action_lower == "click" and has_coords:
-        x, y = round(gt_point_2d[0]), round(gt_point_2d[1])
         return f"Action: click({x}, {y})"
     elif action_lower == "type" and gt_input_text:
         return f'Action: type("{gt_input_text}")'
     elif action_lower in ("scroll", "swipe") and has_coords:
-        x, y = round(gt_point_2d[0]), round(gt_point_2d[1])
         return f"Action: scroll({x}, {y})"
     elif action_lower == "hover" and has_coords:
-        x, y = round(gt_point_2d[0]), round(gt_point_2d[1])
         return f"Action: hover({x}, {y})"
     elif action_lower == "long_press" and has_coords:
-        x, y = round(gt_point_2d[0]), round(gt_point_2d[1])
         return f"Action: long_press({x}, {y})"
     elif has_coords:
-        x, y = round(gt_point_2d[0]), round(gt_point_2d[1])
         return f"Action: {gt_action}({x}, {y})"
     else:
         return f"Action: {gt_action}"
