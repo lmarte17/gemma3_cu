@@ -207,8 +207,10 @@ def process_dataset(
 ):
     is_rl = (dataset_id == DATASET_ID_RL)
 
+    # GUI-Libra-81K-RL only has a "validation" split on HuggingFace
+    split = "validation" if is_rl else "train"
     print(f"Loading dataset: {dataset_id}")
-    dataset = load_dataset(dataset_id, split="train", streaming=stream)
+    dataset = load_dataset(dataset_id, split=split, streaming=stream)
 
     # For non-stratified runs, cap early to avoid formatting unused examples
     if sample_size and not stratify:
