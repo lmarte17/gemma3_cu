@@ -200,7 +200,67 @@ Training can take hours. It is critical to run it inside a `tmux` session so tha
 
 ---
 
-## Part 4: Transferring Weights Back to Mac
+## Part 4: Evaluate on the VM Before Downloading (Recommended)
+
+Training took hours and the L4 GPU is still available. Running evaluation here costs nothing extra and is 3–5× faster than MPS on Apple Silicon — the full ScreenSpot benchmark (~1,272 examples) finishes in about 15–20 minutes. Confirming a positive result before downloading avoids discovering a problem after a slow transfer.
+
+No additional setup is needed — the model is already cached in `~/.cache/huggingface/` and the LoRA weights are in your output directory.
+
+1. **Quick sanity check** (50 examples, ~2 min — confirm output format is intact):
+
+   ```bash
+   cd ~/gui-libra/scripts
+   python eval.py --lora-path ./gemma3-gui-libra-lora-final --max-samples 50
+   ```
+
+   Look for:
+   - **Parse failure rate below ~5%** — confirms the model still produces valid `Action: type(args)` output.
+   - **Click accuracy above base (~35–45%)** — confirms fine-tuning had a positive effect.
+
+   > If parse failures are high (>10%), the model lost the output format. Check that training ran long enough and that `ACTION_WEIGHT_MULTIPLIER` in `config.py` is in the 2–5 range.
+
+2. **Base vs. fine-tuned comparison** (500 examples each, ~10 min total — enough for a reliable delta):
+
+   ```bash
+   # Base model — no LoRA
+   python eval.py --max-samples 500 --output-file ./results_base.json
+
+   # Fine-tuned model
+   python eval.py --lora-path ./gemma3-gui-libra-lora-final --max-samples 500 --output-file ./results_finetuned.json
+   ```
+
+3. **Full ScreenSpot benchmark** (all 1,272 examples — the number to report):
+
+   ```bash
+   python eval.py --lora-path ./gemma3-gui-libra-lora-final --output-file ./results_final.json
+   ```
+
+4. **Export TensorBoard training curves** (screenshot these for your report):
+
+   ```bash
+   # On the VM, start TensorBoard in the background
+   tensorboard --logdir ./gemma3-gui-libra-lora-final --port 6006 &
+
+   # On your Mac, open a second terminal and forward the port
+   gcloud compute ssh your-gcp-username@gui-libra-trainer -- -NL 6006:localhost:6006
+   ```
+
+   Then open `http://localhost:6006` on your Mac and screenshot:
+   - `train/loss` — should show a smooth decay from ~6 → <2
+   - `train/grad_norm` — should stabilise below ~0.5
+   - `train/learning_rate` — confirm cosine decay shape
+
+5. **Copy results back to your Mac**:
+
+   ```bash
+   # Run on your Mac
+   gcloud compute scp your-gcp-username@gui-libra-trainer:~/scripts/results_final.json .
+   gcloud compute scp your-gcp-username@gui-libra-trainer:~/scripts/results_base.json .
+   ```
+
+---
+
+## Part 5: Transferring Weights Back to Mac
 
 Once training is complete, the LoRA adapters (which are very small, usually ~50-100MB) need to be brought back to your MacBook for inference.
 
@@ -224,7 +284,7 @@ Once training is complete, the LoRA adapters (which are very small, usually ~50-
 
 ---
 
-## Part 5: Local Inference (Apple Silicon MPS)
+## Part 6: Local Inference (Apple Silicon MPS)
 
 Now run the fine-tuned model directly on your MacBook. The `infer.py` script automatically detects MPS acceleration.
 
@@ -265,9 +325,9 @@ Now run the fine-tuned model directly on your MacBook. The `infer.py` script aut
 
 ---
 
-## Part 6: Evaluating Your Fine-Tuned Model
+## Part 7: Evaluating Your Fine-Tuned Model (Local / MPS)
 
-Once you have the LoRA weights on your Mac (Part 4), you can measure how well the model actually performs. This part covers running the **ScreenSpot** grounding benchmark, interpreting the results, and points to heavier benchmarks for deeper analysis.
+Once you have the LoRA weights on your Mac (Part 5), you can measure how well the model actually performs. This part covers running the **ScreenSpot** grounding benchmark, interpreting the results, and points to heavier benchmarks for deeper analysis.
 
 ### 6.1 What the Metrics Mean
 
@@ -403,3 +463,109 @@ Once you are satisfied with grounding accuracy, the next step is **end-to-end ta
 ```
 
 For OSWorld and AndroidWorld, plan to run evaluation on the GCP VM rather than your Mac, as they require a full virtual machine environment alongside the model.
+
+---
+
+## Part 8: Writing the Report / Blog Post
+
+A well-structured write-up serves as both a record of what you built and a resource for others replicating or extending the work. Below is the recommended structure, the specific numbers and artefacts to collect for each section, and notes on framing.
+
+---
+
+### 8.1 Recommended Structure
+
+| Section | Purpose | Length |
+|---------|---------|--------|
+| Abstract / TL;DR | One paragraph: what you did, one headline result | ~100 words |
+| Motivation | Why GUI agents matter; where GUI-Libra sits in the landscape | ~200 words |
+| Method | Architecture, training stages, key design decisions | ~400 words |
+| Infrastructure & Cost | VM spec, training time, total cost | ~100 words |
+| Results | Tables, charts, analysis | ~400 words |
+| Ablations / Observations | What you changed and what it did | ~200 words |
+| Limitations & Future Work | Honest assessment of what's missing | ~150 words |
+
+---
+
+### 8.2 What to Capture (and Where to Find It)
+
+**Infrastructure & Cost**
+- VM type, GPU, vCPU/RAM: `g2-standard-32`, L4, 32 vCPU, 128 GB RAM
+- Training wall-clock time per stage: note start/end timestamps from `tmux` output
+- GCP L4 pricing: check current on-demand rate for your region (≈ $0.70–0.90/hr for g2-standard-32)
+- Total cost = hourly rate × hours trained (Stage 1 + Stage 2)
+
+**Model & Training Configuration** — pull directly from `config.py` and `train.py`:
+- Base model: `google/gemma-3-4b-it` (4B parameters, 256K vocabulary)
+- Quantisation: 4-bit QLoRA (BitsAndBytes `nf4`)
+- LoRA rank / alpha: r=16, α=32
+- Batch size / gradient accumulation: report the effective batch size (batch × grad_accum)
+- Learning rate, scheduler, warmup: 2e-4, cosine, warmup_steps
+- ASFT action weight multiplier: value from `config.py`
+
+**Dataset**
+- SFT dataset size and source: GUI-Libra-81K-SFT (HuggingFace)
+- RL dataset size and source: GUI-Libra-81K-RL (HuggingFace)
+- Action type distribution (RL): run `dataset.unique("action_type")` and count per type — this motivates the `--stratify` flag
+- Average tokenised sequence length: log `input_ids.shape` in the collator for one batch; typically ~400–500 tokens
+
+**Training Curves** — screenshot from TensorBoard (Part 4, step 4):
+- `train/loss`: full curve for both stages
+- `train/grad_norm`: should stabilise; spikes indicate instability
+- `train/learning_rate`: confirm cosine shape and warmup
+- Note the step at which loss plateaus (diminishing returns signal)
+
+**Evaluation Results** — from `results_base.json` and `results_final.json` (Part 4):
+
+Reproduce this table for your report:
+
+```
+| Model                     | Overall | Desktop | Mobile | Web  | Icon  | Text  |
+|---------------------------|---------|---------|--------|------|-------|-------|
+| Gemma-3-4B base           | XX.X%   | XX.X%   | XX.X%  | XX.X%| XX.X% | XX.X% |
+| + SFT (Stage 1)           | XX.X%   | ...     |        |      |       |       |
+| + SFT + RL (Stage 2)      | XX.X%   | ...     |        |      |       |       |
+```
+
+Running eval after each stage separately tells you how much Stage 2 contributed on its own.
+
+---
+
+### 8.3 Key Design Decisions to Discuss
+
+These are the technically interesting choices — explain what problem each solved:
+
+1. **On-the-fly image processing in the collator** — why pre-processing all 81K images upfront caused ~1 min/image and how moving it to the collator reduced preprocessing to seconds.
+
+2. **Dynamic padding over `padding="max_length"`** — how fixed 2048-token padding caused a `(2048, 256K)` logit tensor and OOM, and how dynamic padding reduced the logit footprint ~4× by matching actual sequence lengths (~450 tokens).
+
+3. **Switching from `SFTTrainer` to base `Trainer`** — newer TRL versions strip dataset columns in `_prepare_dataset`, breaking the `attention_mask` pipeline; using base `Trainer` bypasses this.
+
+4. **`token_type_ids` for Gemma3** — why Gemma 3 requires this to route image placeholder tokens to bidirectional attention vs. text tokens to causal attention, and how splitting text tokenisation from image processing meant generating it manually in the collator.
+
+5. **ASFT loss weighting** — the per-token `loss_weights` tensor that upweights action and coordinate tokens; why this matters for a task where coordinate precision is the primary evaluation metric.
+
+6. **RL difficulty weighting** — using `gt_bbox` area as a proxy for click difficulty; how it combines with ASFT weighting.
+
+7. **Action-type stratification** — the class imbalance problem in GUI datasets and how `--stratify` fixed it.
+
+---
+
+### 8.4 Framing Suggestions
+
+- **Lead with a failure** — "Training kept OOM-ing until we switched to dynamic padding" is more engaging than a linear narrative of success.
+- **Show the loss curve early** — readers want to see that training actually converged before reading the details.
+- **Use the base model as your baseline**, not published numbers. Your improvement over the base model is what your fine-tuning contributed.
+- **Be honest about limitations** — 81K examples is modest; the model likely still struggles on unfamiliar UIs or very small icons. This is expected and worth saying.
+- **Link to your code** — a GitHub repo link with the full scripts adds credibility and reproducibility.
+
+---
+
+### 8.5 Checklist Before Publishing
+
+- [ ] TensorBoard screenshots saved locally (loss, grad_norm, lr — both stages)
+- [ ] `results_base.json` and `results_final.json` copied from VM
+- [ ] Training time and cost calculated
+- [ ] Action type distribution table from RL dataset
+- [ ] ScreenSpot results table filled in (Overall + by platform + by element type)
+- [ ] Base vs. Stage 1 vs. Stage 2 delta computed
+- [ ] VM stopped (avoid billing after the run)

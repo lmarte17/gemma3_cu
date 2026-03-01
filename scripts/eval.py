@@ -27,9 +27,48 @@ from transformers import AutoModelForCausalLM, AutoProcessor
 from config import MODEL_ID
 
 
-# ── Coordinate parsing (same regex as infer.py) ──────────────────────────────
+# ── System prompt (matches RL training data exactly) ─────────────────────────
+
+SYSTEM_PROMPT = (
+    "You are a GUI agent. You are given a task and a screenshot of the screen. "
+    "You need to perform a series of actions to complete the task. "
+    "You need to choose actions from the the following list:\n\n"
+    "action_type: Answer, action_target: None, value: Answer text, point_2d: None\n"
+    "    ## Explanation: Return the final answer to the user's question\n\n"
+    "action_type: Click, action_target: Element description, value: None, point_2d: [x, y]\n"
+    "    ## Explanation: Tap or click a specific UI element and provide its coordinates\n\n"
+    "action_type: Write, action_target: Element description or None, value: Text to enter, point_2d: [x, y] or None\n"
+    "    ## Explanation: Enter text into a specific input field or at the current focus if coordinate is None\n\n"
+    "action_type: LongPress, action_target: Element description, value: None, point_2d: [x, y]\n"
+    "    ## Explanation: Press and hold on a specific UI element (mobile only) and provide its coordinates\n\n"
+    "action_type: Scroll, action_target: None, value: \"up\" | \"down\" | \"left\" | \"right\", point_2d: None\n"
+    "    ## Explanation: Scroll a view or container in the specified direction\n\n"
+    "action_type: Swipe, action_target: Optional position or None, value: \"up\" | \"down\" | \"left\" | \"right\", point_2d: [x, y] or None\n"
+    "    ## Explanation: Perform a swipe gesture on the screen in the given direction (mobile)\n\n"
+    "action_type: Wait, action_target: None, value: Number of seconds, point_2d: None\n"
+    "    ## Explanation: Pause execution to allow the UI to load or update\n\n"
+    "action_type: NavigateHome, action_target: None, value: None, point_2d: None\n"
+    "    ## Explanation: Navigate to the device's home screen\n\n"
+    "action_type: NavigateBack, action_target: None, value: None, point_2d: None\n"
+    "    ## Explanation: Press the system \"Back\" button\n\n"
+    "action_type: OpenApp, action_target: None, value: App name, point_2d: None\n"
+    "    ## Explanation: Launch an app by its name (mobile only)\n\n"
+    "action_type: Terminate, action_target: None, value: End-task message, point_2d: None\n"
+    "    ## Explanation: Signal the end of the current task with a final message"
+)
+
+
+# ── Coordinate parsing ────────────────────────────────────────────────────────
 
 def parse_action(text):
+    # Native RL dataset format: action_type: Click, ... point_2d: [x, y]
+    pt_match = re.search(r"point_2d:\s*\[(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\]", text)
+    if pt_match:
+        at_match = re.search(r"action_type:\s*(\w+)", text)
+        action_type = at_match.group(1).lower() if at_match else "click"
+        return {"type": action_type, "args": [pt_match.group(1), pt_match.group(2)]}
+
+    # Fallback: custom format Action: click(x, y)
     match = re.search(r"Action:\s*([a-zA-Z_]+)\((.*?)\)", text)
     if not match:
         return None
@@ -92,14 +131,24 @@ def load_model(lora_path):
 # ── Single-example inference ──────────────────────────────────────────────────
 
 def run_inference(model, processor, device, dtype, image, instruction):
+    user_text = (
+        "Please generate the next move according to the UI screenshot, "
+        "instruction and previous actions.\n\n"
+        f"Instruction: {instruction}\n\n"
+        "Interaction History: \n(none)"
+    )
     messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
+        },
         {
             "role": "user",
             "content": [
                 {"type": "image"},
-                {"type": "text", "text": f"Goal: {instruction}"},
+                {"type": "text", "text": user_text},
             ],
-        }
+        },
     ]
     prompt = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
