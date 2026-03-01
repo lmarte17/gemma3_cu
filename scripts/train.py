@@ -126,6 +126,8 @@ def train(args):
             dataset_id=dataset_id,
             sample_size=sample_size,
             stream=args.stream,
+            processor=processor,       # avoids loading the processor a second time
+            stratify=args.stratify,    # RL only: balance examples by action type
         )
 
     # 5. Initialize our Custom ASFT Collator
@@ -197,6 +199,7 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, default="./gemma3-gui-libra-lora")
     parser.add_argument("--resume-from-checkpoint", type=str, default=None, help="Path to a previously trained LoRA adapter directory to continue training.")
     parser.add_argument("--local-data-dir", type=str, default=None, help="Use locally downloaded web-subset data (guiact-web + mind2web) instead of HuggingFace streaming. Point to the root data dir containing annotations/ and images/.")
+    parser.add_argument("--stratify", action="store_true", help="(RL only) Balance training examples by action type (click/type/scroll/etc.).")
     parser.add_argument("--test-mode", action="store_true", help="Load architecture and single batch, then exit.")
     
     args = parser.parse_args()

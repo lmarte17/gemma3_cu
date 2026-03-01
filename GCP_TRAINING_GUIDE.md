@@ -173,9 +173,22 @@ Training can take hours. It is critical to run it inside a `tmux` session so tha
 3. **Stage 2: Reinforcement Learning (RL) Fine-Tuning**:
    Once Stage 1 completes, run the script again on the RL dataset. The `--resume-from-checkpoint` flag loads the Stage 1 LoRA adapters so training continues from where it left off rather than starting from scratch.
 
+   The RL training pipeline now includes two enhancements over Stage 1:
+
+   - **Difficulty-weighted loss**: Each training example is automatically weighted by the inverse square root of its target bounding box area (`gt_bbox` from the dataset). Small targets (e.g., a tiny icon) are harder to hit, so their loss is scaled up — up to 5× — relative to large targets (e.g., a text field). This multiplies with the existing ASFT action-token upweighting.
+   - **Action-type stratification** (`--stratify`): GUI datasets are heavily skewed toward `click` actions. Without balancing, the model under-learns `type`, `scroll`, `hover`, `swipe`, and `long_press`. The `--stratify` flag balances examples evenly across all action types before training. **Note: stratification requires non-streaming mode** — do not combine `--stratify` with `--stream`.
+
+   **Recommended (stratified, non-streaming):**
+   ```bash
+   python train.py --dataset rl --stratify --batch-size 2 --grad-accum 8 --resume-from-checkpoint ./gemma3-gui-libra-lora-sft --output-dir ./gemma3-gui-libra-lora-final
+   ```
+
+   **Alternative (streaming, no stratification — use if disk space is limited):**
    ```bash
    python train.py --dataset rl --stream --batch-size 2 --grad-accum 8 --resume-from-checkpoint ./gemma3-gui-libra-lora-sft --output-dir ./gemma3-gui-libra-lora-final
    ```
+
+   > The RL dataset (`GUI-Libra-81K-RL`) is significantly smaller than the SFT dataset. Non-streaming is preferred here because stratification requires a full pass over the formatted dataset, and the download fits comfortably on a 100 GB boot disk.
 
 4. **Monitoring**:
    - Ensure the output prints `Loading Base Model...` followed by the LoRA parameters summary.
@@ -249,3 +262,144 @@ Now run the fine-tuned model directly on your MacBook. The `infer.py` script aut
      Type: click
      Coordinates/Args: ['850', '920']
    ```
+
+---
+
+## Part 6: Evaluating Your Fine-Tuned Model
+
+Once you have the LoRA weights on your Mac (Part 4), you can measure how well the model actually performs. This part covers running the **ScreenSpot** grounding benchmark, interpreting the results, and points to heavier benchmarks for deeper analysis.
+
+### 6.1 What the Metrics Mean
+
+Your model produces two things per example: an **action type** and **(x, y) coordinates** on a 0–1000 scale. You need to evaluate both.
+
+| Metric | Definition |
+|---|---|
+| **Click Accuracy** | % of predictions where the predicted point lands *inside* the ground-truth element's bounding box. This is the primary metric for GUI grounding. |
+| **Parse Failure Rate** | % of outputs where the model produced no valid `Action: type(args)` pattern. A high rate means the model has lost the output format. |
+
+> **Why not exact coordinate match?** Pixel-perfect coordinate matching is too strict — a click anywhere inside a button is correct. Bounding-box containment is the standard used by ScreenSpot, Mind2Web, and OSWorld.
+
+### 6.2 Benchmark Selection
+
+| Benchmark | Platforms | What it tests | When to use it |
+|---|---|---|---|
+| **ScreenSpot** | Web, Mobile, Desktop | Element grounding from a short instruction | **Start here** — fast, local, directly tests your coordinate output |
+| **Mind2Web** | Web | Multi-step navigation tasks | Good second step; your training data includes it |
+| **GUI-OdysseyBench** | Cross-platform | Full goal completion across long sessions | After grounding is solid |
+| **OSWorld** | Desktop OS (live) | Real task completion inside a VM | Needs a separate VM environment; most realistic but heaviest to run |
+| **AndroidWorld** | Android (live) | End-to-end mobile task completion | Needs an Android emulator |
+
+---
+
+### 6.3 Running ScreenSpot (Recommended First Step)
+
+ScreenSpot is hosted on HuggingFace (`rootsautomation/ScreenSpot`) and the evaluation script is already included in `scripts/eval.py`. Run it on your Mac using the same MPS setup as `infer.py`.
+
+**1. Install the one additional dependency** (if not already present):
+
+```bash
+pip install datasets
+```
+
+**2. Run the full evaluation** _(from inside `scripts/`)_:
+
+```bash
+cd /Users/lmarte/Documents/Projects/gui-libra/scripts
+python eval.py --lora-path ../gemma3-gui-libra-lora-final
+```
+
+**3. For a quick smoke test first** (200 examples, ~10–15 min on MPS):
+
+```bash
+python eval.py --lora-path ../gemma3-gui-libra-lora-final --max-samples 200
+```
+
+**4. Save full per-example results for deeper analysis:**
+
+```bash
+python eval.py --lora-path ../gemma3-gui-libra-lora-final --output-file ../results.json
+```
+
+**Expected output:**
+
+```
+=======================================================
+  SCREENSPOT EVALUATION RESULTS
+=======================================================
+  Total examples   : 1272
+  Click Accuracy   : 901/1272  (70.8%)
+  Parse Failures   : 12/1272   (0.9%)
+
+  --- By Platform ---
+  desktop     : 310/421  (73.6%)
+  mobile      : 305/428  (71.3%)
+  web         : 286/423  (67.6%)
+
+  --- By Element Type ---
+  icon        : 398/621  (64.1%)
+  text        : 503/651  (77.3%)
+=======================================================
+```
+
+> **Tip:** Also run `eval.py` without `--lora-path` to get the **base model's score as a baseline**. The delta between base and fine-tuned is your model's actual contribution.
+
+---
+
+### 6.4 Interpreting Your Results
+
+**Click Accuracy benchmarks to compare against** (as of mid-2025):
+
+| Model | ScreenSpot Click Accuracy |
+|---|---|
+| GPT-4o | ~70% |
+| Gemma-3-4B base (no fine-tuning) | ~35–45% |
+| Qwen2-VL 7B (specialist fine-tuned) | ~78% |
+| **Your GUI-Libra fine-tune target** | **>65%** is a good result for a 4B model |
+
+**What low scores in specific categories tell you:**
+
+| Observation | Likely cause |
+|---|---|
+| Low on `icon` type but high on `text` type | Model struggles with small, ambiguous targets — expected, icons are harder |
+| Low on `web` but high on `mobile` | Training data may be skewed; check your SFT dataset split |
+| High parse failure rate (>5%) | Output format drifted — the ASFT action-token weighting may need tuning (raise `asft_weight` in `config.py`) |
+| Low accuracy + low parse failure | Coordinates are wrong but format is correct — grounding itself needs more training data or epochs |
+
+---
+
+### 6.5 Comparing Base vs. Fine-Tuned
+
+Always generate two numbers before drawing conclusions:
+
+```bash
+# Base model (no LoRA)
+python eval.py --max-samples 500 --output-file ../results_base.json
+
+# Your fine-tuned model
+python eval.py --lora-path ../gemma3-gui-libra-lora-final --max-samples 500 --output-file ../results_finetuned.json
+```
+
+The improvement on the 500-example subset is a reliable proxy for the full benchmark and runs in ~25–30 minutes on M3 Pro Max.
+
+---
+
+### 6.6 Beyond ScreenSpot
+
+Once you are satisfied with grounding accuracy, the next step is **end-to-end task success**. These benchmarks require more setup but give a more realistic picture:
+
+**Mind2Web** (web navigation, same domain as your training data):
+```bash
+# Dataset is on HuggingFace: osunlp/Mind2Web
+# Requires running a browser via Selenium or Playwright
+# See: https://github.com/OSU-NLP-Group/Mind2Web
+```
+
+**OSWorld** (live desktop OS tasks — most realistic):
+```bash
+# Requires a QEMU VM. See setup instructions at:
+# https://github.com/xlang-ai/OSWorld
+# Run on the GCP VM (Part 1) rather than locally — it needs significant CPU/RAM
+```
+
+For OSWorld and AndroidWorld, plan to run evaluation on the GCP VM rather than your Mac, as they require a full virtual machine environment alongside the model.

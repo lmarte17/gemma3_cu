@@ -67,6 +67,18 @@ class ActionAwareDataCollator:
             # Ensure padding tokens have 0 weight (though labels=-100 handles the loss ignoring anyway)
             loss_weights[i][attention_mask[i] == 0] = 0.0
 
+        # Apply per-example difficulty weight (RL dataset only; defaults to 1.0 for SFT).
+        # Computed from gt_bbox area in data_prep: smaller target → harder → higher weight.
+        # Combined effect: difficulty_weight × asft_token_weight (e.g. 2.5 × 3.0 = 7.5 for a
+        # hard action token, 2.5 × 1.0 = 2.5 for a hard reasoning token).
+        if "difficulty_weight" in features[0]:
+            for i, f in enumerate(features):
+                dw = float(f.get("difficulty_weight") or 1.0)
+                if dw != 1.0:
+                    loss_weights[i] = loss_weights[i] * dw
+                    # Re-zero padding after scale to avoid floating-point drift
+                    loss_weights[i][attention_mask[i] == 0] = 0.0
+
         # Gemma3 requires token_type_ids to distinguish image placeholder tokens from
         # text tokens (different attention patterns apply to each).
         # Image positions are wherever input_ids matches the image placeholder token ID.
