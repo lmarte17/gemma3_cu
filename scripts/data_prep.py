@@ -142,7 +142,7 @@ def format_example_for_gemma3_rl(example):
     user_content = [{"type": "image"}, {"type": "text", "text": context}]
     messages = []
     if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt}]})
     messages.append({"role": "user", "content": user_content})
     messages.append({"role": "model", "content": [{"type": "text", "text": action_str}]})
 
