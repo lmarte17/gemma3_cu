@@ -130,26 +130,39 @@ def load_model(lora_path):
 
 # ── Single-example inference ──────────────────────────────────────────────────
 
-def run_inference(model, processor, device, dtype, image, instruction):
-    user_text = (
-        "Please generate the next move according to the UI screenshot, "
-        "instruction and previous actions.\n\n"
-        f"Instruction: {instruction}\n\n"
-        "Interaction History: \n(none)"
-    )
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
-        },
-        {
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": user_text},
-            ],
-        },
-    ]
+def run_inference(model, processor, device, dtype, image, instruction, sft_mode=False):
+    if sft_mode:
+        # SFT training format: no system prompt, Goal: prefix
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": f"Goal: {instruction}"},
+                ],
+            }
+        ]
+    else:
+        # RL training format: system prompt + Please generate context
+        user_text = (
+            "Please generate the next move according to the UI screenshot, "
+            "instruction and previous actions.\n\n"
+            f"Instruction: {instruction}\n\n"
+            "Interaction History: \n(none)"
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": user_text},
+                ],
+            },
+        ]
     prompt = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
@@ -200,7 +213,7 @@ def evaluate(args):
         elem_type = example.get("element_type", "unknown")
         img_w, img_h = image.size
 
-        raw_output = run_inference(model, processor, device, dtype, image, instruction)
+        raw_output = run_inference(model, processor, device, dtype, image, instruction, sft_mode=args.sft_mode)
         parsed = parse_action(raw_output)
 
         hit = False
@@ -322,5 +335,10 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Optional path to write full per-example JSON results (e.g. results.json).",
+    )
+    parser.add_argument(
+        "--sft-mode",
+        action="store_true",
+        help="Use SFT prompt format (Goal: prefix, no system prompt). Use with --lora-path pointing to SFT checkpoint.",
     )
     evaluate(parser.parse_args())
