@@ -45,9 +45,28 @@ from datasets import load_dataset
 
 MODEL_NAME = "SmolVLM2-2.2B-Instruct-Agentic-GUI-Q4_K_M.gguf"
 
-# SmolVLM2 chat template tokens (used when building the raw prompt for /completion)
-_IM_START = "<|im_start|>"
-_IM_END   = "<|im_end|>"
+# SmolVLM2 uses the idefics-style chat template (NOT ChatML).
+# BOS token appears once; turns are separated by <end_of_utterance>.
+_BOS = "<|im_start|>"
+_EOU = "<end_of_utterance>"
+
+# System prompt from the SmolVLM2-2.2B-Agentic-GUI model card.
+# Using the correct system prompt is critical — it defines the action space
+# and coordinate convention the model was trained with.
+_SYSTEM_PROMPT = (
+    "You are a helpful assistant that can interact with a computer screen.\n"
+    "You can use the following tools to interact with the screen:\n"
+    "- click(start_x, start_y) - Click on a specific position on the screen.\n"
+    "- type(text) - Type a string of text.\n"
+    "- scroll(start_x, start_y, direction) - Scroll in a direction.\n"
+    "- key(key_name) - Press a specific key.\n"
+    "- drag(start_x, start_y, end_x, end_y) - Drag from one position to another.\n"
+    "- wait(seconds) - Wait for a specified number of seconds.\n\n"
+    "Important guidelines:\n"
+    "- All coordinates are normalized to [0, 1] range, where (0, 0) is the top-left "
+    "corner of the screen and (1, 1) is the bottom-right corner.\n"
+    "- Coordinates should be the center of the element you want to interact with."
+)
 
 
 # ── Image encoding ────────────────────────────────────────────────────────────
@@ -102,25 +121,22 @@ def run_inference(server_url, image, instruction):
 
     The native /completion endpoint accepts images via the image_data field
     alongside a [img-N] placeholder in the raw prompt (N must match image_data id).
-    Note: <image> is a model-level token handled by the chat template layer;
-    the raw /completion endpoint uses [img-1] as the placeholder instead.
+    The prompt is manually constructed using the idefics-style template that
+    SmolVLM2-Agentic-GUI was trained with (not ChatML).
     """
     b64 = _image_to_b64(image)
 
-    # Manually apply the SmolVLM2 chat template.
-    # Format: <|im_start|>user\n[img-1]\n{text}<|im_end|>\n<|im_start|>assistant\n
+    # Idefics-style template (used by SmolVLM2-Agentic-GUI, from model card):
+    #   <|im_start|>System: {system}<end_of_utterance>
+    #   User:<image>{task}<end_of_utterance>
+    #   Assistant:
+    #
     # [img-1] is llama.cpp's /completion image placeholder (matches image_data id=1).
-    user_text = (
-        "You are a GUI agent. Output only a single action.\n"
-        "Use normalized [0, 1] coordinates where (0,0) is top-left, (1,1) is bottom-right.\n"
-        "Format: click(x, y)\n\n"
-        f"Task: {instruction}"
-    )
+    # <|im_start|> is the BOS token and appears only once at the start.
     prompt = (
-        f"{_IM_START}user\n"
-        f"[img-1]\n"
-        f"{user_text}{_IM_END}\n"
-        f"{_IM_START}assistant\n"
+        f"{_BOS}System: {_SYSTEM_PROMPT}{_EOU}\n"
+        f"User:[img-1]{instruction}{_EOU}\n"
+        f"Assistant:"
     )
 
     resp = requests.post(
@@ -130,7 +146,7 @@ def run_inference(server_url, image, instruction):
             "image_data": [{"data": b64, "id": 1}],
             "max_tokens": 64,
             "temperature": 0.0,
-            "stop": [_IM_END, _IM_START],
+            "stop": [_EOU, "User:"],
         },
         timeout=60,
     )
