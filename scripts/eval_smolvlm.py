@@ -101,12 +101,15 @@ def run_inference(server_url, image, instruction):
     handle the OpenAI vision content format correctly in llama.cpp.
 
     The native /completion endpoint accepts images via the image_data field
-    alongside an <image> placeholder token in the raw prompt text.
+    alongside a [img-N] placeholder in the raw prompt (N must match image_data id).
+    Note: <image> is a model-level token handled by the chat template layer;
+    the raw /completion endpoint uses [img-1] as the placeholder instead.
     """
     b64 = _image_to_b64(image)
 
     # Manually apply the SmolVLM2 chat template.
-    # Format: <|im_start|>user\n<image>\n{text}<|im_end|>\n<|im_start|>assistant\n
+    # Format: <|im_start|>user\n[img-1]\n{text}<|im_end|>\n<|im_start|>assistant\n
+    # [img-1] is llama.cpp's /completion image placeholder (matches image_data id=1).
     user_text = (
         "You are a GUI agent. Output only a single action.\n"
         "Use normalized [0, 1] coordinates where (0,0) is top-left, (1,1) is bottom-right.\n"
@@ -115,7 +118,7 @@ def run_inference(server_url, image, instruction):
     )
     prompt = (
         f"{_IM_START}user\n"
-        f"<image>\n"
+        f"[img-1]\n"
         f"{user_text}{_IM_END}\n"
         f"{_IM_START}assistant\n"
     )
