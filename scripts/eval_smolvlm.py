@@ -106,15 +106,21 @@ def is_hit(pred_x, pred_y, bbox):
 
 def run_inference(client, model_name, image, instruction):
     data_url = image_to_data_url(image)
+    # SmolVLM2's smolvlm chat template does not support a system role.
+    # Embed the system instructions as a preamble inside the user message instead.
+    user_text = (
+        "You are a GUI agent. Output only a single action in the format click(x, y) "
+        "using normalized [0, 1] coordinates where (0,0) is top-left.\n\n"
+        f"Task: {instruction}"
+    )
     response = client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": data_url}},
-                    {"type": "text",      "text": f"Task: {instruction}"},
+                    {"type": "text",      "text": user_text},
                 ],
             },
         ],
