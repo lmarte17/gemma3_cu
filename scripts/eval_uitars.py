@@ -34,11 +34,19 @@ except ImportError:
     print("Falling back to basic image handling — results may vary.\n")
 
 try:
-    from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+    from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
     HAS_QWEN2VL = True
 except ImportError:
-    from transformers import AutoModelForCausalLM, AutoProcessor
+    from transformers import AutoModelForCausalLM
     HAS_QWEN2VL = False
+
+# AutoProcessor has a bug in transformers 5.x for Qwen2VL (NoneType video-processor check).
+# Import it only as a last-resort fallback.
+try:
+    from transformers import AutoProcessor
+    HAS_AUTO_PROCESSOR = True
+except ImportError:
+    HAS_AUTO_PROCESSOR = False
 
 
 # ── Transformers 5.x compatibility fix ───────────────────────────────────────
@@ -177,7 +185,14 @@ def load_model():
         print("Warning: No GPU detected — inference will be slow.")
 
     print(f"Loading {MODEL_ID}...")
-    processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+    # Use Qwen2VLProcessor directly — AutoProcessor triggers a NoneType bug in
+    # transformers 5.x when auto-detecting the video processor class for Qwen2VL.
+    if HAS_QWEN2VL:
+        processor = Qwen2VLProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+    elif HAS_AUTO_PROCESSOR:
+        processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+    else:
+        raise RuntimeError("No suitable processor class available.")
 
     if HAS_QWEN2VL:
         model = Qwen2VLForConditionalGeneration.from_pretrained(
