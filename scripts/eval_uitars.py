@@ -33,6 +33,22 @@ except ImportError:
     print("Warning: qwen-vl-utils not found. Install with: pip install qwen-vl-utils")
     print("Falling back to basic image handling — results may vary.\n")
 
+# ── Transformers 5.x video-processor bug fix ─────────────────────────────────
+# video_processor_class_from_name() crashes with TypeError when the internal
+# `extractors` dict is None.  This affects Qwen2VL loading on transformers 5.x.
+# Monkey-patch it to return None (= no video processor) instead of raising.
+try:
+    import transformers.models.auto.video_processing_auto as _vpa
+    _orig_vp = _vpa.video_processor_class_from_name
+    def _safe_vp(class_name):
+        try:
+            return _orig_vp(class_name)
+        except TypeError:
+            return None
+    _vpa.video_processor_class_from_name = _safe_vp
+except Exception:
+    pass
+
 try:
     from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
     HAS_QWEN2VL = True
@@ -40,8 +56,6 @@ except ImportError:
     from transformers import AutoModelForCausalLM
     HAS_QWEN2VL = False
 
-# AutoProcessor has a bug in transformers 5.x for Qwen2VL (NoneType video-processor check).
-# Import it only as a last-resort fallback.
 try:
     from transformers import AutoProcessor
     HAS_AUTO_PROCESSOR = True
