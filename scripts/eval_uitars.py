@@ -84,14 +84,28 @@ def _fix_preprocessor_config(model_id):
         with open(config_path) as f:
             config = json.load(f)
         size = config.get("size", {})
+        needs_patch = False
+
+        # Case 1: original format — add fast-processor keys (transformers 5.x)
         if "min_pixels" in size and "shortest_edge" not in size:
-            config["size"] = {
-                "shortest_edge": int(math.sqrt(size["min_pixels"])),
-                "longest_edge":  round(math.sqrt(size["max_pixels"])),
-            }
+            size["shortest_edge"] = int(math.sqrt(size["min_pixels"]))
+            size["longest_edge"]  = round(math.sqrt(size["max_pixels"]))
+            needs_patch = True
+
+        # Case 2: already patched to new format — restore slow-processor keys
+        # use_fast=False (slow processor) needs min_pixels/max_pixels, not edge lengths.
+        # Without them, the slow processor falls back to internal defaults
+        # (~6× smaller max resolution than UI-TARS training config) and hurts accuracy.
+        elif "shortest_edge" in size and "min_pixels" not in size:
+            size["min_pixels"] = size["shortest_edge"] ** 2
+            size["max_pixels"] = size["longest_edge"] ** 2
+            needs_patch = True
+
+        if needs_patch:
+            config["size"] = size
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
-            print(f"Patched preprocessor config (transformers 5.x fix): {config_path}")
+            print(f"Patched preprocessor config (both fast+slow keys): {config_path}")
             patched = True
     return patched
 
