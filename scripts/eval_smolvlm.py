@@ -2,7 +2,8 @@
 eval_smolvlm.py — SmolVLM2-2.2B-Agentic-GUI ScreenSpot Evaluation
 
 Evaluates ahmadw/SmolVLM2-2.2B-Agentic-GUI-GGUF via a running llama-server instance.
-No transformers required — just llama.cpp + the openai Python package.
+Uses the native llama.cpp /completion endpoint (not the OpenAI-compatible endpoint,
+which has template tokenization issues with SmolVLM2 vision content).
 
 ── Setup (on the VM) ────────────────────────────────────────────────────────
 
@@ -16,14 +17,14 @@ No transformers required — just llama.cpp + the openai Python package.
        huggingface-cli download ahmadw/SmolVLM2-2.2B-Agentic-GUI-GGUF \\
          --local-dir ~/smolvlm-gui
 
-3. Start the server (keep this running in a separate tmux pane):
+3. Start the server (keep running in a separate tmux pane):
        ~/llama.cpp/build/bin/llama-server \\
          -m ~/smolvlm-gui/SmolVLM2-2.2B-Instruct-Agentic-GUI-Q4_K_M.gguf \\
          --mmproj ~/smolvlm-gui/SmolVLM2-2.2B-Instruct-Agentic-GUI-mmproj-f16.gguf \\
          -c 4096 -ngl 99 --port 8888 --chat-template smolvlm
 
-4. Install the openai client if not present:
-       pip install openai
+4. Install requests if not present (usually already available):
+       pip install requests
 
 ── Usage ─────────────────────────────────────────────────────────────────────
 
@@ -39,107 +40,100 @@ import json
 import re
 from collections import defaultdict
 
+import requests
 from datasets import load_dataset
-from openai import OpenAI
 
-# ── Prompt ────────────────────────────────────────────────────────────────────
-# SmolVLM2-Agentic-GUI was trained on AGUVIS-style data.
-# The model outputs actions like: click(x, y)  — coordinates in [0, 1].
+MODEL_NAME = "SmolVLM2-2.2B-Instruct-Agentic-GUI-Q4_K_M.gguf"
 
-SYSTEM_PROMPT = (
-    "You are a GUI agent. You are given a task and a screenshot of the current screen. "
-    "Output only the single action needed to complete the task. "
-    "Use normalized [0, 1] coordinates where (0, 0) is the top-left corner.\n\n"
-    "Action format:\n"
-    "  click(x, y)                          — click at position\n"
-    "  type(text)                            — type text\n"
-    "  scroll(x, y, direction)              — scroll up/down/left/right\n"
-    "  drag(x1, y1, x2, y2)                 — drag from one point to another\n"
-    "  key(key_name)                        — press a keyboard key\n\n"
-    "Output only the action, nothing else."
-)
+# SmolVLM2 chat template tokens (used when building the raw prompt for /completion)
+_IM_START = "<|im_start|>"
+_IM_END   = "<|im_end|>"
 
 
 # ── Image encoding ────────────────────────────────────────────────────────────
 
-def image_to_data_url(image):
-    """Convert a PIL Image to a base64 data URL for the vision API."""
+def _image_to_b64(image):
+    """Convert a PIL Image to a raw base64 string (no data: prefix)."""
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=90)
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    return f"data:image/jpeg;base64,{b64}"
+    return base64.b64encode(buf.getvalue()).decode()
 
 
 # ── Coordinate parsing ────────────────────────────────────────────────────────
 
 def parse_click_coords(text):
     """
-    Extract click(x, y) coordinates from the model output.
-    SmolVLM2-Agentic outputs [0, 1] normalized coordinates.
-
-    Returns (x, y) as floats in [0, 1], or None if no click found.
+    Extract click(x, y) from SmolVLM2 output.
+    Coordinates are in [0, 1] normalized space.
+    Returns (x, y) as floats, or None if no click found.
     """
-    # Primary: click(x, y)
     m = re.search(r"click\(\s*([0-9]*\.?[0-9]+)\s*,\s*([0-9]*\.?[0-9]+)\s*\)", text)
     if m:
         return float(m.group(1)), float(m.group(2))
-
-    # Fallback: any two numbers in parentheses after 'click'
-    m = re.search(r"click[^(]*\(\s*([0-9]*\.?[0-9]+)[,\s]+([0-9]*\.?[0-9]+)\s*\)", text)
-    if m:
-        return float(m.group(1)), float(m.group(2))
-
     return None
 
 
 # ── Hit detection ─────────────────────────────────────────────────────────────
 
 def is_hit(pred_x, pred_y, bbox):
-    """
-    Both SmolVLM2 output and ScreenSpot bboxes are in [0, 1] — no conversion needed.
-    """
+    """SmolVLM2 and ScreenSpot both use [0,1] — no conversion needed."""
     x_min, y_min, x_max, y_max = bbox
     return x_min <= pred_x <= x_max and y_min <= pred_y <= y_max
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────
 
-def run_inference(client, model_name, image, instruction):
-    data_url = image_to_data_url(image)
-    # SmolVLM2's smolvlm chat template does not support a system role.
-    # Embed the system instructions as a preamble inside the user message instead.
+def run_inference(server_url, image, instruction):
+    """
+    Call the llama-server native /completion endpoint with image_data.
+
+    The /v1/chat/completions (OpenAI-compatible) endpoint fails for SmolVLM2
+    with 'Failed to tokenize prompt' because the smolvlm chat template doesn't
+    handle the OpenAI vision content format correctly in llama.cpp.
+
+    The native /completion endpoint accepts images via the image_data field
+    alongside an <image> placeholder token in the raw prompt text.
+    """
+    b64 = _image_to_b64(image)
+
+    # Manually apply the SmolVLM2 chat template.
+    # Format: <|im_start|>user\n<image>\n{text}<|im_end|>\n<|im_start|>assistant\n
     user_text = (
-        "You are a GUI agent. Output only a single action in the format click(x, y) "
-        "using normalized [0, 1] coordinates where (0,0) is top-left.\n\n"
+        "You are a GUI agent. Output only a single action.\n"
+        "Use normalized [0, 1] coordinates where (0,0) is top-left, (1,1) is bottom-right.\n"
+        "Format: click(x, y)\n\n"
         f"Task: {instruction}"
     )
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                    {"type": "text",      "text": user_text},
-                ],
-            },
-        ],
-        max_tokens=64,      # click(x, y) is short — no need for more
-        temperature=0.0,
+    prompt = (
+        f"{_IM_START}user\n"
+        f"<image>\n"
+        f"{user_text}{_IM_END}\n"
+        f"{_IM_START}assistant\n"
     )
-    return response.choices[0].message.content.strip()
+
+    resp = requests.post(
+        f"{server_url}/completion",
+        json={
+            "prompt":     prompt,
+            "image_data": [{"data": b64, "id": 1}],
+            "max_tokens": 64,
+            "temperature": 0.0,
+            "stop": [_IM_END, _IM_START],
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()["content"].strip()
 
 
 # ── Evaluation loop ───────────────────────────────────────────────────────────
 
 def evaluate(args):
-    client = OpenAI(base_url=f"{args.server_url}/v1", api_key="local")
-
-    # Probe the server to get the loaded model name (used as the model= parameter)
+    # Verify the server is reachable
     try:
-        models = client.models.list()
-        model_name = models.data[0].id
-        print(f"Connected to llama-server. Model: {model_name}")
+        health = requests.get(f"{args.server_url}/health", timeout=5)
+        health.raise_for_status()
+        print(f"Connected to llama-server at {args.server_url}")
     except Exception as e:
         print(f"ERROR: Could not connect to llama-server at {args.server_url}: {e}")
         print("Make sure the server is running (see setup instructions in the docstring).")
@@ -167,10 +161,10 @@ def evaluate(args):
         platform    = example.get("platform", "unknown")
         elem_type   = example.get("element_type", "unknown")
 
-        raw_output = run_inference(client, model_name, image, instruction)
+        raw_output = run_inference(args.server_url, image, instruction)
         coords     = parse_click_coords(raw_output)
 
-        hit        = False
+        hit         = False
         pred_coords = None
 
         if coords is None:
@@ -236,7 +230,7 @@ def evaluate(args):
         with open(args.output_file, "w") as f:
             json.dump(
                 {
-                    "model":   model_name,
+                    "model":   MODEL_NAME,
                     "summary": {
                         "total":              total,
                         "hits":               hits,
@@ -259,12 +253,12 @@ def evaluate(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SmolVLM2-Agentic-GUI ScreenSpot Evaluation")
-    parser.add_argument("--server-url",   type=str, default="http://localhost:8888",
+    parser.add_argument("--server-url",  type=str, default="http://localhost:8888",
                         help="llama-server base URL (default: http://localhost:8888).")
-    parser.add_argument("--split",        type=str, default="test",
+    parser.add_argument("--split",       type=str, default="test",
                         help="Dataset split (default: test).")
-    parser.add_argument("--max-samples",  type=int, default=None,
+    parser.add_argument("--max-samples", type=int, default=None,
                         help="Limit to N examples for a quick smoke test.")
-    parser.add_argument("--output-file",  type=str, default=None,
+    parser.add_argument("--output-file", type=str, default=None,
                         help="Path to write full per-example JSON results.")
     evaluate(parser.parse_args())
