@@ -144,7 +144,7 @@ def run_inference(server_url, image, instruction):
         json={
             "prompt":     prompt,
             "image_data": [{"data": b64, "id": 1}],
-            "max_tokens": 64,
+            "max_tokens": 256,
             "temperature": 0.0,
             "stop": [_EOU, "User:"],
         },
