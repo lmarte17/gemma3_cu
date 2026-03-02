@@ -63,10 +63,19 @@ def _image_to_b64(image):
 
 def parse_click_coords(text):
     """
-    Extract click(x, y) from SmolVLM2 output.
+    Extract click coordinates from SmolVLM2 output.
     Coordinates are in [0, 1] normalized space.
     Returns (x, y) as floats, or None if no click found.
+
+    Handles both formats the model may produce:
+      click(x=0.091, y=0.299)   ← keyword form (inside <code> blocks)
+      click(0.091, 0.299)       ← positional form
     """
+    # Keyword form: click(x=0.091, y=0.299)
+    m = re.search(r"click\(\s*x\s*=\s*([0-9]*\.?[0-9]+)\s*,\s*y\s*=\s*([0-9]*\.?[0-9]+)\s*\)", text)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    # Positional form: click(0.091, 0.299)
     m = re.search(r"click\(\s*([0-9]*\.?[0-9]+)\s*,\s*([0-9]*\.?[0-9]+)\s*\)", text)
     if m:
         return float(m.group(1)), float(m.group(2))
