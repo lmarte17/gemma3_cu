@@ -201,10 +201,12 @@ def load_model():
     print(f"Loading {MODEL_ID}...")
     # Use Qwen2VLProcessor directly — AutoProcessor triggers a NoneType bug in
     # transformers 5.x when auto-detecting the video processor class for Qwen2VL.
+    # use_fast=False: transformers 5.x switched to a "fast" image processor by default
+    # but UI-TARS was saved with the slow one; they produce different outputs.
     if HAS_QWEN2VL:
-        processor = Qwen2VLProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+        processor = Qwen2VLProcessor.from_pretrained(MODEL_ID, trust_remote_code=True, use_fast=False)
     elif HAS_AUTO_PROCESSOR:
-        processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True, use_fast=False)
     else:
         raise RuntimeError("No suitable processor class available.")
 
@@ -252,7 +254,16 @@ def run_inference(model, processor, device, image, instruction):
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
     if HAS_QWEN_UTILS:
-        image_inputs, video_inputs = process_vision_info(messages)
+        # Pass UI-TARS's original pixel bounds (from preprocessor_config.json).
+        # qwen-vl-utils defaults (min=200704, max=1003520) differ from UI-TARS training
+        # values and cause aggressive downscaling of large screenshots.
+        try:
+            image_inputs, video_inputs = process_vision_info(
+                messages, min_pixels=3136, max_pixels=2116800
+            )
+        except TypeError:
+            # Older qwen-vl-utils doesn't accept min/max pixel kwargs
+            image_inputs, video_inputs = process_vision_info(messages)
         inputs = processor(
             text=[text],
             images=image_inputs,
