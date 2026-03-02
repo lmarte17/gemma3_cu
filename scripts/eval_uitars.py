@@ -272,7 +272,7 @@ def run_inference(model, processor, device, image, instruction):
     with torch.inference_mode():
         output_ids = model.generate(
             **inputs,
-            max_new_tokens=256,
+            max_new_tokens=512,
             do_sample=False,         # greedy — more stable for eval
             repetition_penalty=1.05,
         )
