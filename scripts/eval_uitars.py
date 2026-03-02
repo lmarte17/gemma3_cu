@@ -13,7 +13,10 @@ Usage:
 """
 
 import argparse
+import glob
 import json
+import math
+import os
 import re
 import sys
 from collections import defaultdict
@@ -36,6 +39,39 @@ try:
 except ImportError:
     from transformers import AutoModelForCausalLM, AutoProcessor
     HAS_QWEN2VL = False
+
+
+# ── Transformers 5.x compatibility fix ───────────────────────────────────────
+
+def _fix_preprocessor_config(model_id):
+    """
+    Transformers 5.x Qwen2VLImageProcessor expects size = {shortest_edge, longest_edge}.
+    UI-TARS's preprocessor_config.json uses size = {min_pixels, max_pixels} (older format).
+    This patches the cached config file in-place so AutoProcessor can load it.
+
+    sqrt(min_pixels=3136) = 56  →  shortest_edge = 56
+    sqrt(max_pixels=2116800) ≈ 1455  →  longest_edge = 1455
+    """
+    model_slug = model_id.replace("/", "--")
+    pattern = os.path.join(
+        os.path.expanduser("~/.cache/huggingface/hub"),
+        f"models--{model_slug}", "snapshots", "*", "preprocessor_config.json",
+    )
+    patched = False
+    for config_path in glob.glob(pattern):
+        with open(config_path) as f:
+            config = json.load(f)
+        size = config.get("size", {})
+        if "min_pixels" in size and "shortest_edge" not in size:
+            config["size"] = {
+                "shortest_edge": int(math.sqrt(size["min_pixels"])),
+                "longest_edge":  round(math.sqrt(size["max_pixels"])),
+            }
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+            print(f"Patched preprocessor config (transformers 5.x fix): {config_path}")
+            patched = True
+    return patched
 
 MODEL_ID = "ByteDance-Seed/UI-TARS-2B-SFT"
 
@@ -129,6 +165,8 @@ def is_hit(pred_x, pred_y, bbox):
 # ── Model loading ─────────────────────────────────────────────────────────────
 
 def load_model():
+    _fix_preprocessor_config(MODEL_ID)
+
     if torch.cuda.is_available():
         device = "cuda"
         dtype = torch.bfloat16
